@@ -25,7 +25,7 @@ resource "aws_cloudwatch_metric_alarm" "periodic_cost" {
 
   metric_query {
     id          = "e1"
-    expression  = "RATE(m1) * ${var.period} 24 * 3600"
+    expression  = "RATE(m1) * ${var.period} * 24 * 3600"
     label       = var.period == 1 ? "Daily cost" : "Cost per ${var.period} days."
     return_data = true
   }
