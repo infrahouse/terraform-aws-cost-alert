@@ -1,0 +1,2 @@
+black ~= 24.4
+infrahouse-toolkit ~= 2.0
