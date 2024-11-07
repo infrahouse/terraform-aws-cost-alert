@@ -1,22 +1,18 @@
-resource "random_string" "alert-suffix" {
-  length  = 6
-  special = false
-}
-
 resource "aws_cloudwatch_metric_alarm" "periodic_cost" {
-  alarm_name          = "periodic_cost_${random_string.alert-suffix.result}"
+  alarm_name          = var.alert_name
+  alarm_description   = "Estimated daily cost."
   comparison_operator = "GreaterThanThreshold"
   threshold           = var.cost_threshold
-  evaluation_periods  = 1
-  datapoints_to_alarm = 1
+  evaluation_periods  = 24 / var.period_hours
+  datapoints_to_alarm = 24 / var.period_hours
 
   metric_query {
     id = "m1"
     metric {
       metric_name = "EstimatedCharges"
       namespace   = "AWS/Billing"
-      period      = var.period * 24 * 3600
-      stat        = "Maximum"
+      period      = var.period_hours * 3600
+      stat        = "Average"
       dimensions = {
         "Currency" = "USD"
       }
@@ -25,8 +21,8 @@ resource "aws_cloudwatch_metric_alarm" "periodic_cost" {
 
   metric_query {
     id          = "e1"
-    expression  = "RATE(m1) * ${var.period} * 24 * 3600"
-    label       = var.period == 1 ? "Daily cost" : "Cost per ${var.period} days."
+    expression  = "RATE(m1) * 3600 * 24"
+    label       = "Estimated Cost per Day"
     return_data = true
   }
 
