@@ -1,3 +1,3 @@
-black ~= 24.4
+black ~=25.12
 infrahouse-toolkit ~= 2.0
 pytest ~= 8.3
