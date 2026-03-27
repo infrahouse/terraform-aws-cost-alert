@@ -29,6 +29,7 @@ override.tf.json
 # example: *tfplan*
 .terraform.lock.hcl
 terraform.tfvars
+test_data/cost-alert/terraform.tf
 tf.plan
 .idea
 /docs/_build/
@@ -36,3 +37,5 @@ tf.plan
 /plan.stdout
 __pycache__
 .pytest_cache
+/pytest-*-output.log
+/.claude/*.local.json
