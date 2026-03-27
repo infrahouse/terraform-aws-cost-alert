@@ -1,0 +1,497 @@
+diff --git a/.github/workflows/terraform-CD.yml b/.github/workflows/terraform-CD.yml
+index b0db362..4a4abcd 100644
+--- a/.github/workflows/terraform-CD.yml
++++ b/.github/workflows/terraform-CD.yml
+@@ -38,6 +38,11 @@ jobs:
+           role-session-name: github-actions
+           aws-region: ${{ env.AWS_DEFAULT_REGION }}
+ 
++      - name: Set up Python
++        uses: actions/setup-python@v6
++        with:
++          python-version: '3.14'
++
+       # Prepare Python environment
+       - name: Setup Python Environment
+         run: make bootstrap
+diff --git a/.gitignore b/.gitignore
+index 1005691..9785ab5 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -29,6 +29,7 @@ override.tf.json
+ # example: *tfplan*
+ .terraform.lock.hcl
+ terraform.tfvars
++test_data/cost-alert/terraform.tf
+ tf.plan
+ .idea
+ /docs/_build/
+@@ -36,3 +37,5 @@ tf.plan
+ /plan.stdout
+ __pycache__
+ .pytest_cache
++/pytest-*-output.log
++/.claude/*.local.json
+diff --git a/Makefile b/Makefile
+index ce773c3..ce8b902 100644
+--- a/Makefile
++++ b/Makefile
+@@ -4,13 +4,17 @@ define PRINT_HELP_PYSCRIPT
+ import re, sys
+ 
+ for line in sys.stdin:
+-    match = re.match(r'^([a-zA-Z_-]+):.*?## (.*)$$', line)
+-    if match:
+-        target, help = match.groups()
+-        print("%-40s %s" % (target, help))
++	match = re.match(r'^([a-zA-Z_-]+):.*?## (.*)$$', line)
++	if match:
++		target, help = match.groups()
++		print("%-40s %s" % (target, help))
+ endef
+ export PRINT_HELP_PYSCRIPT
+ 
++TEST_REGION ?= us-east-1
++TEST_ROLE ?= arn:aws:iam::303467602807:role/ecs-tester
++TEST_SELECTOR ?= aws-6
++
+ help: install-hooks
+ 	@python -c "$$PRINT_HELP_PYSCRIPT" < Makefile
+ 
+@@ -21,52 +25,132 @@ install-hooks:  ## Install repo hooks
+ 	@test -L .git/hooks/pre-commit || ln -fs ../../hooks/pre-commit .git/hooks/pre-commit
+ 	@chmod +x .git/hooks/pre-commit
+ 
+-
+ .PHONY: test
+ test:  ## Run tests on the module
+-	rm -f test_data/test_module/.terraform.lock.hcl
+-	#rm -rf test_data/test_module/.terraform
+ 	pytest -xvvs tests/
+ 
++.PHONY: test-keep
++test-keep:  ## Run a test and keep resources
++	pytest -xvvs \
++		--aws-region=${TEST_REGION} \
++		--test-role-arn=${TEST_ROLE} \
++		-k $(TEST_SELECTOR) \
++		--keep-after \
++		tests/test_module.py 2>&1 | tee pytest-$(shell date +%Y%m%d-%H%M%S)-output.log
++
++.PHONY: test-clean
++test-clean:  ## Run a test and destroy resources
++	pytest -xvvs \
++		--aws-region=${TEST_REGION} \
++		--test-role-arn=${TEST_ROLE} \
++		-k $(TEST_SELECTOR) \
++		tests/test_module.py 2>&1 | tee pytest-$(shell date +%Y%m%d-%H%M%S)-output.log
++
++.PHONY: lint
++lint:  ## Check code style
++	black --check tests
++	terraform fmt -check -recursive
+ 
+ .PHONY: bootstrap
+-bootstrap: ## bootstrap the development environment
+-	pip install -U "pip ~= 23.1"
+-	pip install -U "setuptools ~= 68.0"
++bootstrap: install-hooks  ## Bootstrap the development environment
++	pip install -U "pip ~= 25.2"
++	pip install -U "setuptools ~= 80.9"
+ 	pip install -r requirements.txt
+ 
+ .PHONY: clean
+-clean: ## clean the repo from cruft
++clean:  ## Clean the repo from cruft
+ 	rm -rf .pytest_cache
+ 	find . -name '.terraform' -exec rm -fr {} +
++	find . -name '__pycache__' -exec rm -fr {} +
+ 
+ .PHONY: fmt
+ fmt: format
+ 
+ .PHONY: format
+-format:  ## Use terraform fmt to format all files in the repo
+-	@echo "Formatting terraform files"
++format:  ## Format all files in the repo
+ 	terraform fmt -recursive
+-
+-define BROWSER_PYSCRIPT
+-import os, webbrowser, sys
+-
+-from urllib.request import pathname2url
+-
+-webbrowser.open("file://" + pathname2url(os.path.abspath(sys.argv[1])))
++	black tests
++
++# Internal function to handle version release
++# Args: $(1) = major|minor|patch
++define do_release
++	@echo "Checking if git-cliff is installed..."
++	@command -v git-cliff >/dev/null 2>&1 || { \
++		echo ""; \
++		echo "Error: git-cliff is not installed."; \
++		echo ""; \
++		echo "Please install it using one of the following methods:"; \
++		echo ""; \
++		echo "  Cargo (Rust):"; \
++		echo "    cargo install git-cliff"; \
++		echo ""; \
++		echo "  Homebrew (macOS/Linux):"; \
++		echo "    brew install git-cliff"; \
++		echo ""; \
++		echo "  From binary (Linux/macOS/Windows):"; \
++		echo "    https://github.com/orhun/git-cliff/releases"; \
++		echo ""; \
++		exit 1; \
++	}
++	@echo "Checking if bumpversion is installed..."
++	@command -v bumpversion >/dev/null 2>&1 || { \
++		echo ""; \
++		echo "Error: bumpversion is not installed."; \
++		echo ""; \
++		echo "Please install it using:"; \
++		echo "  make bootstrap"; \
++		echo ""; \
++		exit 1; \
++	}
++	@BRANCH=$$(git rev-parse --abbrev-ref HEAD); \
++	if [ "$$BRANCH" != "main" ]; then \
++		echo "Error: You must be on the 'main' branch to release."; \
++		echo "Current branch: $$BRANCH"; \
++		exit 1; \
++	fi; \
++	CURRENT=$$(grep ^current_version .bumpversion.cfg | head -1 | cut -d= -f2 | tr -d ' '); \
++	echo "Current version: $$CURRENT"; \
++	MAJOR=$$(echo $$CURRENT | cut -d. -f1); \
++	MINOR=$$(echo $$CURRENT | cut -d. -f2); \
++	PATCH=$$(echo $$CURRENT | cut -d. -f3); \
++	if [ "$(1)" = "major" ]; then \
++		NEW_VERSION=$$((MAJOR + 1)).0.0; \
++	elif [ "$(1)" = "minor" ]; then \
++		NEW_VERSION=$$MAJOR.$$((MINOR + 1)).0; \
++	elif [ "$(1)" = "patch" ]; then \
++		NEW_VERSION=$$MAJOR.$$MINOR.$$((PATCH + 1)); \
++	fi; \
++	echo "New version will be: $$NEW_VERSION"; \
++	printf "Continue? (y/n) "; \
++	read -r REPLY; \
++	case "$$REPLY" in \
++		[Yy]|[Yy][Ee][Ss]) \
++			echo "Updating CHANGELOG.md with git-cliff..."; \
++			git cliff --unreleased --tag $$NEW_VERSION --prepend CHANGELOG.md; \
++			git add CHANGELOG.md; \
++			git commit -m "chore: update CHANGELOG for $$NEW_VERSION" || exit 1; \
++			echo "Bumping version with bumpversion..."; \
++			bumpversion --new-version $$NEW_VERSION --message "chore: bump version to {new_version}" patch || exit 1; \
++			echo ""; \
++			echo "Released version $$NEW_VERSION"; \
++			echo ""; \
++			echo "Next steps:"; \
++			echo "  git push && git push --tags"; \
++			;; \
++		*) \
++			echo "Release cancelled"; \
++			;; \
++	esac
+ endef
+-export BROWSER_PYSCRIPT
+ 
+-BROWSER := python -c "$$BROWSER_PYSCRIPT"
++.PHONY: release-patch
++release-patch: ## Release a patch version (x.x.PATCH)
++	$(call do_release,patch)
+ 
+-.PHONY: docs
+-docs: ## generate Sphinx HTML documentation, including API docs
+-	$(MAKE) -C docs clean
+-	$(MAKE) -C docs html
+-	$(BROWSER) docs/_build/html/index.html
++.PHONY: release-minor
++release-minor: ## Release a minor version (x.MINOR.0)
++	$(call do_release,minor)
+ 
+-.PHONY: lint
+-lint:  ## Lint the module
+-	@echo "Check code style"
+-	black --check tests
+-	terraform fmt -check
++.PHONY: release-major
++release-major: ## Release a major version (MAJOR.0.0)
++	$(call do_release,major)
+\ No newline at end of file
+diff --git a/requirements.txt b/requirements.txt
+index 9e1b3e1..26e6bd2 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -1,3 +1,2 @@
+-black ~= 24.4
+-infrahouse-toolkit ~= 2.0
+-pytest ~= 8.3
++infrahouse-core ~= 0.28
++pytest-infrahouse ~= 0.24, >= 0.24.1
+diff --git a/terraform.tf b/terraform.tf
+index fea1b89..8a588c7 100644
+--- a/terraform.tf
++++ b/terraform.tf
+@@ -4,7 +4,7 @@ terraform {
+   required_providers {
+     aws = {
+       source  = "hashicorp/aws"
+-      version = "~> 5.56"
++      version = ">= 5.56, < 7.0"
+     }
+   }
+ }
+diff --git a/test_data/cost-alert/.gitignore b/test_data/cost-alert/.gitignore
+new file mode 100644
+index 0000000..825e368
+--- /dev/null
++++ b/test_data/cost-alert/.gitignore
+@@ -0,0 +1,14 @@
++# Local .terraform directories
++**/.terraform/*
++
++# .tfstate files
++*.tfstate
++*.tfstate.*
++
++# Include tfplan files to ignore the plan output of command: terraform plan -out=tfplan
++# example: *tfplan*
++.terraform.lock.hcl
++terraform.tfvars
++test_data/cost-alert/terraform.tf
++tf.plan
++terraform.tf
+diff --git a/test_data/cost-alert/providers.tf b/test_data/cost-alert/providers.tf
+index 1957f59..475dd92 100644
+--- a/test_data/cost-alert/providers.tf
++++ b/test_data/cost-alert/providers.tf
+@@ -1,12 +1,14 @@
+ provider "aws" {
+   region = var.region
+-  assume_role {
+-    role_arn = var.role_arn
++  dynamic "assume_role" {
++    for_each = var.role_arn != null ? [1] : []
++    content {
++      role_arn = var.role_arn
++    }
+   }
+   default_tags {
+     tags = {
+-      "created_by" : "infrahouse/terraform-aws-cost-alert" # GitHub repository that created a resource
++      "created_by" : "infrahouse/terraform-aws-cost-alert"
+     }
+-
+   }
+-}
++}
+\ No newline at end of file
+diff --git a/test_data/cost-alert/terraform.tf b/test_data/cost-alert/terraform.tf
+deleted file mode 100644
+index 44aa1eb..0000000
+--- a/test_data/cost-alert/terraform.tf
++++ /dev/null
+@@ -1,9 +0,0 @@
+-terraform {
+-  //noinspection HILUnresolvedReference
+-  required_providers {
+-    aws = {
+-      source  = "hashicorp/aws"
+-      version = "~> 5.11"
+-    }
+-  }
+-}
+diff --git a/test_data/cost-alert/variables.tf b/test_data/cost-alert/variables.tf
+index 57930e0..ef5dd30 100644
+--- a/test_data/cost-alert/variables.tf
++++ b/test_data/cost-alert/variables.tf
+@@ -1,2 +1,10 @@
+-variable "region" {}
+-variable "role_arn" {}
+\ No newline at end of file
++variable "region" {
++  description = "AWS region"
++  type        = string
++}
++
++variable "role_arn" {
++  description = "IAM role ARN to assume"
++  type        = string
++  default     = null
++}
+\ No newline at end of file
+diff --git a/tests/conftest.py b/tests/conftest.py
+index a63cbfd..b3188a7 100644
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -1,79 +1,12 @@
+-import boto3
+-import pytest
+-import logging
++"""
++Pytest configuration and fixtures for terraform-aws-cost-alert module tests.
++"""
+ 
+-from infrahouse_toolkit.logging import setup_logging
++import logging
+ 
+-TEST_ROLE_ARN = "arn:aws:iam::303467602807:role/ecs-tester"
+-DEFAULT_PROGRESS_INTERVAL = 10
+-TRACE_TERRAFORM = False
+-UBUNTU_CODENAME = "jammy"
++from infrahouse_core.logging import setup_logging
+ 
+-LOG = logging.getLogger()
+-REGION = "us-east-1"
++LOG = logging.getLogger(__name__)
+ TERRAFORM_ROOT_DIR = "test_data"
+ 
+-setup_logging(LOG, debug=True)
+-
+-
+-def pytest_addoption(parser):
+-    parser.addoption(
+-        "--keep-after",
+-        action="store_true",
+-        default=False,
+-        help="If specified, don't destroy resources.",
+-    )
+-    parser.addoption(
+-        "--test-role-arn",
+-        action="store",
+-        default=TEST_ROLE_ARN,
+-        help=f"AWS IAM role ARN that will create resources. Default, {TEST_ROLE_ARN}",
+-    )
+-
+-@pytest.fixture(scope="session")
+-def keep_after(request):
+-    return request.config.getoption("--keep-after")
+-
+-
+-@pytest.fixture(scope="session")
+-def test_role_arn(request):
+-    return request.config.getoption("--test-role-arn")
+-
+-@pytest.fixture(scope="session")
+-def aws_iam_role():
+-    sts = boto3.client("sts")
+-    return sts.assume_role(
+-        RoleArn=TEST_ROLE_ARN, RoleSessionName=TEST_ROLE_ARN.split("/")[1]
+-    )
+-
+-
+-@pytest.fixture(scope="session")
+-def boto3_session(aws_iam_role):
+-    return boto3.Session(
+-        aws_access_key_id=aws_iam_role["Credentials"]["AccessKeyId"],
+-        aws_secret_access_key=aws_iam_role["Credentials"]["SecretAccessKey"],
+-        aws_session_token=aws_iam_role["Credentials"]["SessionToken"],
+-    )
+-
+-
+-@pytest.fixture(scope="session")
+-def ec2_client(boto3_session):
+-    return boto3_session.client("ec2", region_name=REGION)
+-
+-
+-@pytest.fixture(scope="session")
+-def ec2_client_map(ec2_client, boto3_session):
+-    regions = [reg["RegionName"] for reg in ec2_client.describe_regions()["Regions"]]
+-    ec2_map = {reg: boto3_session.client("ec2", region_name=reg) for reg in regions}
+-
+-    return ec2_map
+-
+-
+-@pytest.fixture()
+-def route53_client(boto3_session):
+-    return boto3_session.client("route53", region_name=REGION)
+-
+-
+-@pytest.fixture()
+-def elbv2_client(boto3_session):
+-    return boto3_session.client("elbv2", region_name=REGION)
++setup_logging(LOG, debug=True)
+\ No newline at end of file
+diff --git a/tests/test_module.py b/tests/test_module.py
+index 9dd4926..3f801ac 100644
+--- a/tests/test_module.py
++++ b/tests/test_module.py
+@@ -1,35 +1,68 @@
+ import json
++import os
++import shutil
+ from os import path as osp
+ from textwrap import dedent
+ 
+-from infrahouse_toolkit.terraform import terraform_apply
++import pytest
++from pytest_infrahouse import terraform_apply
+ 
+ from tests.conftest import (
+     LOG,
+-    TRACE_TERRAFORM,
+-    REGION,
+     TERRAFORM_ROOT_DIR,
+ )
+ 
++REGION = "us-east-1"
+ 
+-def test_module(keep_after, test_role_arn):
+ 
+-    # Create ECS with httpd container
++@pytest.mark.parametrize("aws_provider_version", ["~> 5.56", "~> 6.0"], ids=["aws-5", "aws-6"])
++def test_module(keep_after, test_role_arn, aws_provider_version):
+     terraform_module_dir = osp.join(TERRAFORM_ROOT_DIR, "cost-alert")
++
++    # Clean up stale Terraform state
++    terraform_dir = osp.join(terraform_module_dir, ".terraform")
++    if osp.isdir(terraform_dir):
++        shutil.rmtree(terraform_dir)
++    lock_file = osp.join(terraform_module_dir, ".terraform.lock.hcl")
++    if osp.isfile(lock_file):
++        os.remove(lock_file)
++
++    with open(osp.join(terraform_module_dir, "terraform.tf"), "w") as fp:
++        fp.write(
++            dedent(
++                f"""
++                terraform {{
++                  required_providers {{
++                    aws = {{
++                      source  = "hashicorp/aws"
++                      version = "{aws_provider_version}"
++                    }}
++                  }}
++                }}
++                """
++            )
++        )
++
+     with open(osp.join(terraform_module_dir, "terraform.tfvars"), "w") as fp:
+         fp.write(
+             dedent(
+                 f"""
+-                role_arn      = "{test_role_arn}"
+-                region        = "{REGION}"
++                region = "{REGION}"
+                 """
+             )
+         )
++        if test_role_arn:
++            fp.write(
++                dedent(
++                    f"""
++                    role_arn = "{test_role_arn}"
++                    """
++                )
++            )
+ 
+     with terraform_apply(
+         terraform_module_dir,
+         destroy_after=not keep_after,
+         json_output=True,
+-        enable_trace=TRACE_TERRAFORM,
+     ) as tf_output:
+         LOG.info(json.dumps(tf_output, indent=4))

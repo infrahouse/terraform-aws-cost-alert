@@ -1,0 +1,11 @@
+# Checkov configuration for terraform-aws-cost-alert module
+
+framework:
+  - terraform
+
+skip-path:
+  - test_data
+  - examples
+
+compact: true
+quiet: false

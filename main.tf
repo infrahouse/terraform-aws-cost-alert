@@ -29,10 +29,19 @@ resource "aws_cloudwatch_metric_alarm" "periodic_cost" {
   alarm_actions = [
     aws_sns_topic.cost_notifications.arn
   ]
+
+  tags = merge(
+    local.default_module_tags,
+    {
+      module_version : local.module_version
+    }
+  )
 }
 
 resource "aws_sns_topic" "cost_notifications" {
-  name_prefix = "cost-periodic-"
+  name_prefix       = "cost-periodic-"
+  kms_master_key_id = "alias/aws/sns"
+  tags              = local.default_module_tags
 }
 
 resource "aws_sns_topic_subscription" "cost_emails" {

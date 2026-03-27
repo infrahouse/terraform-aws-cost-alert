@@ -38,6 +38,11 @@ jobs:
           role-session-name: github-actions
           aws-region: ${{ env.AWS_DEFAULT_REGION }}
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
       # Prepare Python environment
       - name: Setup Python Environment
         run: make bootstrap
