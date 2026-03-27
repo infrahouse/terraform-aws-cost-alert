@@ -38,4 +38,5 @@ tf.plan
 __pycache__
 .pytest_cache
 /pytest-*-output.log
+/.claude/reviews/
 /.claude/*.local.json
