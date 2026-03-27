@@ -1,5 +1,5 @@
 locals {
-  module_version = "1.0.0"
+  module_version = "1.1.0"
 
   module_name = "infrahouse/cost-alert/aws"
   default_module_tags = {
