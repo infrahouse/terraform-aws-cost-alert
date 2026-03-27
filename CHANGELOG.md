@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - 2026-03-27
+
+### Miscellaneous Tasks
+
+- Remove ignored reviews
+
+### Refactor
+
+- Modernize module to align with InfraHouse coding standards ([#15](https://github.com/infrahouse/terraform-aws-cost-alert/issues/15))
+
 ## [1.0.0] - 2024-11-07
 
 ### Features
