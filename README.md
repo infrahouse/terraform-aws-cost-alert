@@ -38,7 +38,7 @@ confirmation request that must be accepted.
 ```hcl
 module "cost_alert" {
   source  = "registry.infrahouse.com/infrahouse/cost-alert/aws"
-  version = "1.1.0"
+  version = "1.1.1"
 
   cost_threshold     = 20
   notification_email = "alerts@example.com"
